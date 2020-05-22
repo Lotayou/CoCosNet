@@ -1,3 +1,7 @@
+![python](https://img.shields.io/badge/python-3.6+-blue.svg)
+![pytorch](https://img.shields.io/badge/pytorch-1.0%2B-brightgreen)
+[![report](https://img.shields.io/badge/arxiv-report-red)](https://arxiv.org/abs/2004.05571)
+
 # CoCosNet
 Pytorch Implementation of the paper ["Cross-domain Correspondence Learning for Exemplar-based Image Translation"](https://panzhang0212.github.io/CoCosNet) (CVPR 2020 oral).
 
