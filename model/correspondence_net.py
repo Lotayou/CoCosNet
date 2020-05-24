@@ -90,7 +90,6 @@ class CorrespondenceNet(nn.Module):
         b_img = F.tanh(self.to_rgb(b_warp))
         return sa, sb, b_warp, b_img
         
-
 # Basic residual block
 class BasicBlock(nn.Module):
     def __init__(self, cin, cout):

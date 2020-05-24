@@ -3,7 +3,6 @@ https://github.com/roimehrez/contextualLoss/blob/master/CX/CX_distance.py
 '''
 import torch
 import numpy as np
-import sklearn.manifold.t_sne
 
 class TensorAxis:
     N = 0
