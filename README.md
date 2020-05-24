@@ -16,8 +16,9 @@ This repo will be updated frequently these days, please check up the progress in
 - tqdm
 
 # TODO list
-- [ ] Prepare dataset
-- [ ] Implement the network
+- [x] Prepare dataset
+- [x] Implement the network
+- [ ] Implement the loss functions
 - [ ] Implement the trainer
 - [ ] Training on DeepFashion
 - [ ] Training for other tasks
