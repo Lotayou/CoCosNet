@@ -52,7 +52,7 @@ class CorrespondenceNet(nn.Module):
         # vectorize (merge dim H, W) and normalize channelwise vectors
         fa = fa.view(n, c, -1)
         fb = fb.view(n, c, -1)
-        fa = fb / torch.norm(fa, dim=1, keepdim=True)
+        fa = fa / torch.norm(fa, dim=1, keepdim=True)
         fb = fb / torch.norm(fb, dim=1, keepdim=True)
         
         # correlation matrix, gonna be huge (4096*4096)
