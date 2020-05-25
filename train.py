@@ -2,11 +2,12 @@ from options import DebugOptions, TrainOptions
 from data import create_dataset
 from model import create_model
 from torch.backends import cudnn
-
+import torch
 #opt = DebugOptions()
 opt = TrainOptions()
 #os.environ['CUDA_VISIBLE_DEVICES'] = str(opt.gpu_ids[0])  # test single GPU first
 
+torch.cuda.set_device(opt.gpu_ids[0])
 cudnn.enabled = True
 cudnn.benchmark = True
 
