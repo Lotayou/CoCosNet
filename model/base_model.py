@@ -33,20 +33,23 @@ class BaseModel(ABC):
         self.gpu_ids = opt.gpu_ids
         self.isTrain = opt.isTrain
         self.device = torch.device('cuda:{}'.format(self.gpu_ids[0])) if self.gpu_ids else torch.device('cpu')  # get device name: CPU or GPU
-        self.save_dir = os.path.join(opt.checkpoints_dir, opt.name)  # save all the checkpoints to save_dir
-        if not os.path.isdir(self.save_dir):
-            os.mkdir(self.save_dir)
+        # damn it, build all directories recursively
+        self.mkdir_recursive(opt.checkpoints_dir, opt.name, 'images')
+        self.save_dir = os.path.join(opt.checkpoints_dir, opt.name)
         self.save_image_dir = os.path.join(self.save_dir, 'images')
-        if not os.path.isdir(self.save_image_dir):
-            os.mkdir(self.save_image_dir)
            
-        if opt.preprocess != 'scale_width':  # with [scale_width], input images might have different sizes, which hurts the performance of cudnn.benchmark.
-            torch.backends.cudnn.benchmark = True
         self.loss_names = []
         self.model_names = []
         self.visual_names = []
         self.optimizers = []
         self.image_paths = []
+
+    @staticmethod
+    def mkdir_recursive(*folders):
+        cur_folder = None
+        for folder in folders:
+            cur_folder = folder if cur_folder is None else os.path.join(cur_folder, folder)
+            os.makedirs(cur_folder, exist_ok=True)
 
     @staticmethod
     def modify_commandline_options(parser, is_train):
@@ -93,8 +96,19 @@ class BaseModel(ABC):
         if self.isTrain:
             self.schedulers = [networks.get_scheduler(optimizer, opt) for optimizer in self.optimizers]
         if not self.isTrain or opt.continue_train:
-            self.load_networks(opt.epoch)
+            self.load_networks(opt.which_epoch)
+        else:
+            self.init_networks(opt)
         self.print_networks(opt.verbose)
+
+    def init_networks(self, opt):
+        print('Initializing models in %s mode and start training from scratch' % opt.init_type)
+        for name in self.model_names:
+            net = getattr(self, 'net' + name)
+            if isinstance(net, torch.nn.DataParallel):
+                net = net.module
+            net.to(self.device)
+            networks.init_weights(net, opt.init_type, opt.init_gain)
 
     def eval(self):
         """Make models eval mode during test time"""
@@ -155,12 +169,7 @@ class BaseModel(ABC):
                 save_filename = '%s_net_%s.pth' % (epoch, name)
                 save_path = os.path.join(self.save_dir, save_filename)
                 net = getattr(self, 'net' + name)
-
-                if len(self.gpu_ids) > 0 and torch.cuda.is_available():
-                    torch.save(net.module.cpu().state_dict(), save_path)
-                    net.cuda(self.gpu_ids[0])
-                else:
-                    torch.save(net.cpu().state_dict(), save_path)
+                torch.save(net.state_dict(), save_path)
 
     def __patch_instance_norm_state_dict(self, state_dict, module, keys, i=0):
         """Fix InstanceNorm checkpoints incompatibility (prior to 0.4)"""

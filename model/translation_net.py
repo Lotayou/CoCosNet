@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import model.networks
-import torch.nn.utils.spectral_norm as spec_norm
+from torch.nn.utils import spectral_norm
 
 # Also, we figure it would be better to inject the warped
 # guidance at the beginning rather than a constant tensor
@@ -12,7 +12,7 @@ class TranslationNet(nn.Module):
         super().__init__()
         print('Making a TranslationNet')
         self.fc = nn.Conv2d(3, 16 * opt.ngf, 3, padding=1)
-        
+        self.sw = opt.image_size // (2**5)  # fixed, 5 upsample layers
         self.head = SPADEResBlk(16 * opt.ngf, 16 * opt.ngf, opt.seg_dim)
         self.G_middle_0 = SPADEResBlk(16 * opt.ngf, 16 * opt.ngf, opt.seg_dim)
         self.G_middle_1 = SPADEResBlk(16 * opt.ngf, 16 * opt.ngf, opt.seg_dim)
@@ -32,9 +32,9 @@ class TranslationNet(nn.Module):
         if seg is None:
             seg = x
         # separate execute
+        x = F.interpolate(x, (self.sw, self.sw), mode='bilinear') # how can I forget this one?
         x = self.fc(x)
-
-        x = self.head_0(x, seg)
+        x = self.head(x, seg)
 
         x = self.up(x)    # 16
         x = self.G_middle_0(x, seg)
@@ -46,7 +46,11 @@ class TranslationNet(nn.Module):
         x = self.up_1(x, seg)
         x = self.up(x)    # 128
         
-        x = self.non_local(x)
+        # 20200525: Critical Bug:
+        # Using non-local layer with such a huge spatial resolution (128*128)
+        # occupied way too much memory (as the intermediate tensor is O(h ** 4) memory)
+        # I sincerely hope it's an honest mistake:)
+        # x = self.non_local(x)
         
         x = self.up_2(x, seg)
         x = self.up(x)    # 256
@@ -61,15 +65,15 @@ class TranslationNet(nn.Module):
 # differ from the original https://github.com/NVlabs/SPADE
 # where BN will be replaced with PN.
 class SPADE(nn.Module):
-    def __init__(self, cin, cout):
-    
+    def __init__(self, cin, seg_dim):
+        super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(cin, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(seg_dim, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
         )
-        self.alpha = nn.Conv2d(128, cout,
+        self.alpha = nn.Conv2d(128, cin,
             kernel_size=3, stride=1, padding=1)
-        self.beta = nn.Conv2d(128, cout,
+        self.beta = nn.Conv2d(128, cin,
             kernel_size=3, stride=1, padding=1)
             
     @staticmethod
@@ -78,23 +82,22 @@ class SPADE(nn.Module):
             positional normalization: normalize each positional vector along the channel dimension
         '''
         assert len(x.shape) == 4, 'Only works for 4D(image) tensor'
-        x -= x.mean(dim=1, keepdim=True)
-        x_norm = torch.maximum(x.norm(dim=1, keepdim=True), 1e-6)
-        x /= x_norm
+        x = x - x.mean(dim=1, keepdim=True)
+        x_norm = x.norm(dim=1, keepdim=True) + 1e-6
+        x = x / x_norm
         return x
         
     def DPN(self, x, s):
         h, w = x.shape[2], x.shape[3]
-        x = F.interpolate(x, (h, w), mode='bilinear')
-        x = self.conv(x)
-        a = self.alpha(x)
-        b  = self.beta(x)
-        return x * a + b
-        return x
-        
+        s = F.interpolate(s, (h, w), mode='bilinear')
+        s = self.conv(s)
+        a = self.alpha(s)
+        b  = self.beta(s)
+        return x * (1 + a) + b
+
     def forward(self, x, s):
-        alpha, beta = self.encoder(s)
-        return self.DPN(self.PN(x))
+        x_out = self.DPN(self.PN(x), s)
+        return x_out
         
 class SPADEResBlk(nn.Module):
     def __init__(self, fin, fout, seg_fin):
@@ -156,7 +159,7 @@ class NonLocalLayer(nn.Module):
         self.g = nn.Conv2d(cin, self.cinter, 
             kernel_size=1, stride=1, padding=0)
         
-        self.w = nn.Conv2d(cinter, cin,
+        self.w = nn.Conv2d(self.cinter, cin,
             kernel_size=1, stride=1, padding=0)
         
     def forward(self, x):
@@ -164,6 +167,8 @@ class NonLocalLayer(nn.Module):
         g_x = self.g(x).view(n, self.cinter, -1)
         phi_x = self.phi(x).view(n, self.cinter, -1)
         theta_x = self.theta(x).view(n, self.cinter, -1)
+        # This non-local layer here occupies too much memory...
+        print(phi_x.shape, theta_x.shape)
         f_x = torch.bmm(phi_x.transpose(-1,-2), theta_x) # note the transpose here
         f_x = F.softmax(f_x, dim=-1)
         res_x = self.w(torch.bmm(g_x, f_x))  # inverse order to save a permute of g_x

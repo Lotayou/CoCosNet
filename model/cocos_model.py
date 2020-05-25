@@ -1,14 +1,16 @@
-from model.base_model import BaseModel
 import torch
 from torch import nn
 import torch.nn.functional as F
-from model import networks
-from model.translation_net import TranslationNet
-from model.correspondence_net import CorrepondenceNet
-from model.discriminator import Discriminator
-
-from model.loss import VGGLoss, GANLoss
+import os
+import cv2
+import numpy as np
 import itertools
+from model import networks
+from model.base_model import BaseModel
+from model.translation_net import TranslationNet
+from model.correspondence_net import CorrespondenceNet
+from model.discriminator import Discriminator
+from model.loss import VGGLoss, GANLoss
 '''
     Cross-Domian Correpondence Model
 '''
@@ -21,6 +23,9 @@ class CoCosModel(BaseModel):
     def torch2numpy(x):
         # from [-1,1] to [0,255]
         return ((x.detach().cpu().numpy().transpose(1,2,0) + 1) * 127.5).astype(np.uint8)
+
+    def __name__(self):
+        return 'CoCosModel'
         
     def __init__(self, opt):
         super().__init__(opt)
@@ -31,8 +36,8 @@ class CoCosModel(BaseModel):
             os.mkdir(self.image_dir)
             
         # initialize networks
-        self.model_names ['C', 'T']
-        self.netC = CorrepondenceNet(opt)
+        self.model_names = ['C', 'T']
+        self.netC = CorrespondenceNet(opt)
         self.netT = TranslationNet(opt)
         if opt.isTrain:
             self.model_names.append('D')
@@ -55,13 +60,14 @@ class CoCosModel(BaseModel):
             
             
             # initialize optimizers
-            self.optT = torch.optim.Adam(self.netT.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-            self.optC = torch.optim.Adam(self.netC.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            gen_params = itertools.chain(self.netT.parameters(), self.netC.parameters())
+            self.optG = torch.optim.Adam(gen_params, lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optD = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-            self.optimizers = [self.optC, self.optT, self.optD]
+            self.optimizers = [self.optG, self.optD]
 
         # Finally, load checkpoints and recover schedulers
-        self.setup()
+        self.setup(opt)
+        torch.autograd.set_detect_anomaly(True)
             
     def set_input(self, batch):
         # expecting 'a' -> 'b_gt', 'a_exemplar' -> 'b_exemplar', ('b_deform')
@@ -78,6 +84,7 @@ class CoCosModel(BaseModel):
         _, _, _, self.b_reg = self.netC(self.a_exemplar, 
             F.interpolate(self.b_warp, (self.w, self.w), mode='bilinear')
         )
+        #print(self.b_gen.shape, self.b_reg.shape, self.b_gt.shape)
         
     def test(self):
         with torch.no_grad():
@@ -96,7 +103,8 @@ class CoCosModel(BaseModel):
         # 4. Contextural loss
         self.loss_context = self.opt.lambda_context * self.criterionVGG(self.b_gen, self.b_exemplar, mode='contextual', layers=[2,3,4,5])
         # 5. Reg loss
-        self.loss_reg = self.opt.lambda_reg * self.criterionReg(self.b_reg, self.b_exemplar)
+        b_exemplar_small = F.interpolate(self.b_exemplar, self.b_reg.size()[2:], mode='bilinear')
+        self.loss_reg = self.opt.lambda_reg * self.criterionReg(self.b_reg, b_exemplar_small)
         # 6. GAN loss
         pred_real, pred_fake = self.discriminate(self.b_gt, self.b_gen)
         self.loss_adv = self.opt.lambda_adv * self.criterionAdv(pred_fake, True, for_discriminator=False)
@@ -119,8 +127,8 @@ class CoCosModel(BaseModel):
         # the prediction contains the intermediate outputs of multiscale GAN,
         # so it's usually a list
         if isinstance(pred, list):
-            fake = [p[:tensor.size(0) // 2] for p in pred])
-            real = [p[tensor.size(0) // 2:] for p in pred])
+            fake = [p[:p.size(0) // 2] for p in pred]
+            real = [p[p.size(0) // 2:] for p in pred]
         else:
             fake = pred[:pred.size(0) // 2]
             real = pred[pred.size(0) // 2:]
@@ -134,8 +142,8 @@ class CoCosModel(BaseModel):
 
         pred_fake, pred_real = self.discriminate(self.b_gt, self.b_gen)
 
-        self.d_fake = self.criterionGAN(pred_fake, False, for_discriminator=True)
-        self.d_real = self.criterionGAN(pred_real, True, for_discriminator=True)
+        self.d_fake = self.criterionAdv(pred_fake, False, for_discriminator=True)
+        self.d_real = self.criterionAdv(pred_real, True, for_discriminator=True)
         
         d_loss = (self.d_fake + self.d_real) / 2
         d_loss.backward()
@@ -151,7 +159,9 @@ class CoCosModel(BaseModel):
     def log_loss(self, epoch, iter):
         msg = 'Epoch %d iter %d\n  ' % (epoch, iter)
         for name in self.loss_names:
-            val = getattr(self, 'loss_%s' % name).item()
+            val = getattr(self, 'loss_%s' % name)
+            if isinstance(val, torch.cuda.FloatTensor):
+                val = val.item()
             msg += '%s: %.4f, ' % (name, val)
         print(msg)
         
@@ -163,6 +173,7 @@ class CoCosModel(BaseModel):
             [getattr(self, name) for name in self.visual_names], dim=3
         )[0] # only save one example
         cv2.imwrite(save_path, self.torch2numpy(pack))
+        cv2.imwrite('b_ex' + save_path, self.torch2numpy(self.b_exemplar[0]))
         
     def update_learning_rate(self):
         '''

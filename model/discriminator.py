@@ -6,21 +6,21 @@ import model.networks
 class Discriminator(nn.Module):
     def __init__(self, opt):
         super(Discriminator, self).__init__()
+        print('Making a discriminator')
         input_nc = opt.ncB
         ndf = opt.ndf
-        n_layers = 3
-        self.numD = opt.numD
+        n_layers = opt.nd_layers
+        self.num_D = opt.numD
         norm_layer = nn.BatchNorm2d
         
-        if num_D == 1:
+        if self.num_D == 1:
             layers = self.get_layers(input_nc, ndf, n_layers, norm_layer)
             self.model = nn.Sequential(*layers)
         else:
             layers = self.get_layers(input_nc, ndf, n_layers, norm_layer)
             self.add_module("model_0", nn.Sequential(*layers))
-            self.down = nn.AvgPool2d(3, stride=2, padding=[
-                                     1, 1], count_include_pad=False)
-            for i in range(1, num_D):
+            self.down = nn.AvgPool2d(3, stride=2, padding=[1, 1], count_include_pad=False)
+            for i in range(1, self.num_D):
                 ndf_i = int(round(ndf / (2**i)))
                 layers = self.get_layers(input_nc, ndf_i, n_layers, norm_layer)
                 self.add_module("model_%d" % i, nn.Sequential(*layers))

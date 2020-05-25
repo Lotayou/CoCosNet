@@ -16,7 +16,7 @@ from model.contextual_loss import symmetric_CX_loss
 # that has the same size as the input
 class GANLoss(nn.Module):
     def __init__(self, gan_mode, target_real_label=1.0, target_fake_label=0.0,
-                 tensor=torch.FloatTensor, opt=None):
+                 tensor=torch.cuda.FloatTensor, opt=None):
         super(GANLoss, self).__init__()
         self.real_label = target_real_label
         self.fake_label = target_fake_label
@@ -126,6 +126,7 @@ class VGGLoss(nn.Module):
         else:
             layers = [l-1 for l in layers] # 0-index
         for i in layers:
+            #print(i, x_vgg[i].shape, y_vgg[i].shape)
             loss += self.weights[i] * criterion(x_vgg[i], y_vgg[i].detach())
                 
         return loss
